@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <thread>
+#include <future>
 
 using json = nlohmann::ordered_json;
 using rapidcsv::Document;
@@ -11,6 +12,7 @@ int main(){
     //parse the json object passed as a runtime argument
     json input;
     
+    std::clog<<"put the json object"<<std::endl;
     std::cin >> input;
 
     //open the dataset specified
@@ -46,36 +48,40 @@ int main(){
     //read the maximum iterations
     int maxIterations = input["iterations"].get<int>();
 
+    threadPool pool(std::thread::hardware_concurrency());
+
     //the clustering algorithm
     for(auto iteration(0); iteration < maxIterations; iteration++){
         for(auto i(0) ; i < numClusters; i++){
             clusters[i].clearPoints();
         }
-        for(auto c : instances){
-            std::vector<uint32_t> distances;
-            distances.resize(numClusters);
-            std::vector<std::thread> distanceCalculatingThreads;
+        for(const auto& c : instances){
+            std::vector<float> distances(numClusters);
+            std::vector<std::future<float>> futures;
             for(auto i(0); i < numClusters; i++){
-                distanceCalculatingThreads.emplace_back([&, i](){
-                    distances[i] = clusters[i].d(c);
-                });
-            }
-            for(auto& t : distanceCalculatingThreads){
-                t.join();
+                futures.push_back(pool.enqueue([&k = clusters[i], c](){
+                    return k.d(c);
+                }));
             }
 
+            for(auto i(0); i < numClusters; i++){
+                distances[i] = futures[i].get();
+            }
+            
             auto it = std::min_element(distances.begin(), distances.end());
             int bestCluster = std::distance(distances.begin(), it);
             clusters[bestCluster].addPoint(c);
         }
-        std::vector<std::thread> centroidThreads;
+
+        std::vector<std::future<void>> centroidFutures;
         for(auto i(0); i < numClusters; i++){
-            centroidThreads.emplace_back([&, i](){
+            centroidFutures.push_back(pool.enqueue([&, i](){
                 clusters[i].calculateCenter();
-            });
+            }));
         }
-        for(auto& t : centroidThreads){
-            t.join();
+
+        for(auto& f : centroidFutures){
+            f.get();
         }
     }
 
@@ -85,10 +91,11 @@ int main(){
         point center = clusters[c].getCenter();
         output["centers"].push_back({center.x, center.y, center.z});
         std::vector<point> outputCluster = clusters[c].getPoints();
+        output[key] = json::array();
         for(auto p:outputCluster){
             output[key].push_back({p.x, p.y, p.z});
         } 
     }
-    std::cout << output.dump();
+    std::cout << output.dump(4);
     return 0;
 }
