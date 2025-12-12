@@ -1,2 +1,2 @@
 ## Source   
-This folder is reserved for the `.cpp`, `.cxx`, `.c++` or `.c` files, basically it holds the source code.
+Оваа верзија вклучува поправки во начинот на пресметување на растојание, додаден е индекс за валидација и отстранет е текстот кој се користеше за логинг на грешки.

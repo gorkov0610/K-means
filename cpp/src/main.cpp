@@ -12,7 +12,6 @@ int main(){
     //parse the json object passed as a runtime argument
     json input;
     
-    std::clog<<"put the json object"<<std::endl;
     std::cin >> input;
 
     //open the dataset specified
@@ -34,6 +33,16 @@ int main(){
     for(size_t i(0); i < xs.size(); i++){
         instances.emplace_back(xs[i], ys[i], zs[i]);
     }
+    
+    //get the cluster centroid needed for validation
+    int numOfPoints = xs.size();
+    float cx(0), cy(0), cz(0);
+    for(auto& i : instances){
+        cx += i.x;
+        cy += i.y;
+        cz += i.z;
+    }
+    point datasetCentroid((cx/instances.size()), (cy/instances.size()), (cz/instances.size()));
 
     //get the centers of the clusters and prepare them for clustering
     for(auto& c : input["centers"]){
@@ -85,7 +94,35 @@ int main(){
         }
     }
 
+    std::vector<std::future<float>> futures;
+    float BCSS(0.0);
+    for(auto i(0); i < numClusters; i++){
+        float bcss(0.0);
+        futures.push_back(pool.enqueue([&clusters, &datasetCentroid, i](){
+            return clusters[i].numPoints() * (clusters[i].getCenter() - datasetCentroid).squaredNorm();
+        }));
+    }
+    for(auto& i : futures){
+        BCSS += i.get();
+    }
+    futures.clear();
+    float WCSS(0.0);
+    for(auto& c : clusters){
+        futures.push_back(pool.enqueue([c](){
+            float wcss(0.0);
+            point clusterCentroid = c.getCenter();
+            for(const auto& i : c.getPoints()){
+                wcss += (i - clusterCentroid).squaredNorm();
+            }
+            return wcss;
+        }));
+    }
+    for(auto& i : futures){
+        WCSS += i.get();
+    }
+    float CH = (BCSS / (numClusters - 1)) / (WCSS / (numOfPoints - numClusters));
     json output;
+    output["CH_index"] = CH;
     for(auto c(0) ; c < clusters.size(); c++){
         std::string key = "C" + std::to_string(c);
         point center = clusters[c].getCenter();

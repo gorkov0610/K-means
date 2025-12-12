@@ -14,12 +14,20 @@ struct point{
         point(float x, float y, float z) : x(x),y(y),z(z){}
         float x,y,z;
 
+        float squaredNorm(){
+            return x*x + y*y + z*z;
+        }
         bool operator==(const point& a) const{
             auto eq = [](float a, float b){
                 return std::fabs(a - b) < 1e-6f;
             };
             return eq(x, a.x) && eq(y, a.y) && eq(z, a.z);
         }
+
+        point operator-(const point& a) const{
+            return point((x-a.x), (y-a.y), (z-a.z));
+        }
+
 };
 
 class cluster{
@@ -53,15 +61,19 @@ class cluster{
         }
 
         float d(const point& a){
-            return abs((center.x - a.x) + (center.y - a.y) + (center.z - a.z));
+            return fabs(center.x - a.x) + fabs(center.y - a.y) + fabs(center.z - a.z);
         }
 
         void clearPoints(){
             points.clear();
         }
 
-        std::vector<point> getPoints(){
+        const std::vector<point>& getPoints() const{
             return points;
+        }
+
+        size_t numPoints(){
+            return points.size();
         }
     private:
         point center;
