@@ -11,6 +11,7 @@
 
 struct point{
     public:
+        point() = default;
         point(float x, float y, float z) : x(x),y(y),z(z){}
         float x,y,z;
 

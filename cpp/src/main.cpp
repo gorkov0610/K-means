@@ -2,13 +2,15 @@
 #include "../include/rapidcsv.h"
 #include "../include/utills.hpp"
 #include <unordered_map>
+#include <random>
 #include <iostream>
-#include <thread>
-#include <future>
 
 using json = nlohmann::ordered_json;
 using rapidcsv::Document;
 int main(){
+    constexpr int numIterations = 100;
+    constexpr float eps2 = 1e-8f;
+
     //parse the json object passed as a runtime argument
     json input;
     
@@ -30,13 +32,13 @@ int main(){
     auto xs = dataset.GetColumn<float>(x);
     auto ys = dataset.GetColumn<float>(y);
     auto zs = dataset.GetColumn<float>(z);
-    for(size_t i(0); i < xs.size(); i++){
+    for(size_t i{0}; i < xs.size(); i++){
         instances.emplace_back(xs[i], ys[i], zs[i]);
     }
     
     //get the cluster centroid needed for validation
     int numOfPoints = xs.size();
-    float cx(0), cy(0), cz(0);
+    float cx{0}, cy{0}, cz{0};
     for(auto& i : instances){
         cx += i.x;
         cy += i.y;
@@ -44,36 +46,43 @@ int main(){
     }
     point datasetCentroid((cx/instances.size()), (cy/instances.size()), (cz/instances.size()));
 
-    //get the centers of the clusters and prepare them for clustering
-    for(auto& c : input["centers"]){
-        point center(c["x"].get<float>(), c["y"].get<float>(), c["z"].get<float>());
-        clusters.emplace_back(center);
-        instances.erase(
-            std::remove(instances.begin(), instances.end(), center),
-            instances.end()
-        );
+    if(!input.contains("centers")){
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> distrib(0, numOfPoints - 1);
+        for(auto i{0}; i < numClusters; i++){
+            clusters.emplace_back(instances[distrib(gen)]);
+        }
+    }else{
+        //get the centers of the clusters and prepare them for clustering
+        for(auto& c : input["centers"]){
+            point center(c["x"].get<float>(), c["y"].get<float>(), c["z"].get<float>());
+            clusters.emplace_back(center);
+        }
     }
-
-    //read the maximum iterations
-    int maxIterations = input["iterations"].get<int>();
 
     threadPool pool(std::thread::hardware_concurrency());
 
     //the clustering algorithm
-    for(auto iteration(0); iteration < maxIterations; iteration++){
-        for(auto i(0) ; i < numClusters; i++){
+    int iteration{0};
+    float eps{1.0};
+    std::vector<point> oldCenters(numClusters);
+    while(iteration < numIterations && eps > eps2){
+        for(auto i{0} ; i < numClusters; i++){
             clusters[i].clearPoints();
+            oldCenters.emplace_back(clusters[i].getCenter());
         }
         for(const auto& c : instances){
             std::vector<float> distances(numClusters);
             std::vector<std::future<float>> futures;
-            for(auto i(0); i < numClusters; i++){
+            futures.reserve(numClusters);
+            for(auto i{0}; i < numClusters; i++){
                 futures.push_back(pool.enqueue([&k = clusters[i], c](){
                     return k.d(c);
                 }));
             }
 
-            for(auto i(0); i < numClusters; i++){
+            for(auto i{0}; i < numClusters; i++){
                 distances[i] = futures[i].get();
             }
             
@@ -83,7 +92,7 @@ int main(){
         }
 
         std::vector<std::future<void>> centroidFutures;
-        for(auto i(0); i < numClusters; i++){
+        for(auto i{0}; i < numClusters; i++){
             centroidFutures.push_back(pool.enqueue([&, i](){
                 clusters[i].calculateCenter();
             }));
@@ -92,11 +101,19 @@ int main(){
         for(auto& f : centroidFutures){
             f.get();
         }
+        float maxShift{0.0f};
+        for(auto i{0}; i < numClusters; i++){
+            float shift = (clusters[i].getCenter() - oldCenters[i]).squaredNorm();
+            maxShift = std::max(maxShift, shift);
+        }
+
+        eps = maxShift;
+        iteration++;
     }
 
     std::vector<std::future<float>> futures;
     float BCSS(0.0);
-    for(auto i(0); i < numClusters; i++){
+    for(auto i{0}; i < numClusters; i++){
         float bcss(0.0);
         futures.push_back(pool.enqueue([&clusters, &datasetCentroid, i](){
             return clusters[i].numPoints() * (clusters[i].getCenter() - datasetCentroid).squaredNorm();
@@ -106,10 +123,10 @@ int main(){
         BCSS += i.get();
     }
     futures.clear();
-    float WCSS(0.0);
+    float WCSS{0.0};
     for(auto& c : clusters){
         futures.push_back(pool.enqueue([c](){
-            float wcss(0.0);
+            float wcss{0.0};
             point clusterCentroid = c.getCenter();
             for(const auto& i : c.getPoints()){
                 wcss += (i - clusterCentroid).squaredNorm();
@@ -123,7 +140,7 @@ int main(){
     float CH = (BCSS / (numClusters - 1)) / (WCSS / (numOfPoints - numClusters));
     json output;
     output["CH_index"] = CH;
-    for(auto c(0) ; c < clusters.size(); c++){
+    for(auto c{0} ; c < clusters.size(); c++){
         std::string key = "C" + std::to_string(c);
         point center = clusters[c].getCenter();
         output["centers"].push_back({center.x, center.y, center.z});
@@ -133,6 +150,6 @@ int main(){
             output[key].push_back({p.x, p.y, p.z});
         } 
     }
-    std::cout << output.dump(4);
+    std::cout << output.dump(2);
     return 0;
 }
