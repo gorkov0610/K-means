@@ -16,7 +16,7 @@ int main(){
     std::cin >> input;
 
     //open the dataset specified
-    Document dataset(input["dataset"].get<std::string>());
+    Document dataset(input["dataset"].get<std::string>(),rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(','), rapidcsv::ConverterParams(true));
     
     //declare the clusters and reserve space for them
     int numClusters = input["numClusters"].get<int>();
@@ -32,11 +32,14 @@ int main(){
     auto ys = dataset.GetColumn<float>(y);
     auto zs = dataset.GetColumn<float>(z);
     for(size_t i{0}; i < xs.size(); i++){
+        if(std::isnan(xs[i]) || std::isnan(ys[i]) || std::isnan(zs[i])){
+            continue;
+        }
         instances.emplace_back(xs[i], ys[i], zs[i]);
     }
     
     //get the cluster centroid needed for validation
-    int numOfPoints = xs.size();
+    int numOfPoints = instances.size();
     float cx{0}, cy{0}, cz{0};
     for(auto& i : instances){
         cx += i.x;
@@ -60,46 +63,65 @@ int main(){
         }
     }
 
-    threadPool pool(std::thread::hardware_concurrency());
+    int numThreads = std::thread::hardware_concurrency();
+    threadPool pool(numThreads);
 
     //the clustering algorithm
     int iteration{0};
     float eps{1.0};
+    size_t chunkSize = static_cast<size_t>(std::ceil(static_cast<float>(instances.size()) / numThreads));
     std::vector<point> oldCenters(numClusters);
     while(iteration < numIterations && eps > eps2){
         for(auto i{0} ; i < numClusters; i++){
             clusters[i].clearPoints();
-            oldCenters.emplace_back(clusters[i].getCenter());
+            oldCenters[i] = clusters[i].getCenter();
         }
-        for(const auto& c : instances){
-            std::vector<float> distances(numClusters);
-            std::vector<std::future<float>> futures;
-            futures.reserve(numClusters);
-            for(auto i{0}; i < numClusters; i++){
-                futures.push_back(pool.enqueue([&k = clusters[i], c](){
-                    return k.d(c);
-                }));
-            }
+        std::vector<std::vector<std::vector<point>>> threadLocalPoints(numThreads, std::vector<std::vector<point>>(numClusters));
+        std::vector<std::future<void>> futures;
+        for(auto t{0}; t < numThreads; t++){
+            auto start = t * chunkSize;
+            auto end = std::min(start + chunkSize, instances.size());
 
-            for(auto i{0}; i < numClusters; i++){
-                distances[i] = futures[i].get();
-            }
-            
-            auto it = std::min_element(distances.begin(), distances.end());
-            int bestCluster = std::distance(distances.begin(), it);
-            clusters[bestCluster].addPoint(c);
-        }
+            futures.push_back(pool.enqueue([&, t, start, end](){
+                for(auto i{start}; i < end; i++){
+                    const point& p = instances[i];
+                    int best{0};
+                    float minD = std::numeric_limits<float>::max();
 
-        std::vector<std::future<void>> centroidFutures;
-        for(auto i{0}; i < numClusters; i++){
-            centroidFutures.push_back(pool.enqueue([&, i](){
-                clusters[i].calculateCenter();
+                    for(auto k{0}; k < numClusters; k++){
+                        float dist = clusters[k].d(p);
+                        if(dist < minD){
+                            minD = dist;
+                            best = k;
+                        }
+                    }
+                    threadLocalPoints[t][best].push_back(p);
+                }
             }));
         }
 
-        for(auto& f : centroidFutures){
+        for(auto& f : futures){
             f.get();
         }
+        futures.clear();
+
+        for(auto k{0}; k < numClusters; k++){
+            for(auto t{0}; t < numThreads; t++){
+                for(auto& p : threadLocalPoints[t][k]){
+                    clusters[k].addPoint(p);
+                }
+            }
+        }
+
+        for(auto k{0}; k < numClusters; k++){
+            futures.push_back(pool.enqueue([&, k](){
+                clusters[k].calculateCenter();
+            }));
+        }
+        for(auto& f : futures){
+            f.get();
+        }
+        futures.clear();
         float maxShift{0.0f};
         for(auto i{0}; i < numClusters; i++){
             float shift = (clusters[i].getCenter() - oldCenters[i]).squaredNorm();

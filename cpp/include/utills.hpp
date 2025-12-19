@@ -4,7 +4,6 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
-#include <atomic>
 #include <cmath>
 #include <queue>
 #include <future>
@@ -41,8 +40,10 @@ class cluster{
         }
 
         void calculateCenter(){
+            if(points.empty()) return;
+            
             float newX(0), newY(0), newZ(0);
-            for(auto i : points){
+            for(const auto& i : points){
                 newX += i.x;
                 newY += i.y;
                 newZ += i.z;
