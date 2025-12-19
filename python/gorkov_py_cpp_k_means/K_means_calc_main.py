@@ -8,19 +8,37 @@ from flet import (
     ElevatedButton, OutlinedButton,
     Dropdown, Switch,
     PopupMenuButton, PopupMenuItem,
-    icons, Radio, RadioGroup, FilePicker, Checkbox
+    icons, Radio, RadioGroup, FilePicker, Checkbox, WebView
 )
 import threading
 import subprocess
 import json
 import csv
 import ast
+import os
+import sys
+#import tempfile
 #import asyncio # for flet async
+
+# for new graphing fn
+import plotly.graph_objects as go
+
+
+# for the graph for old graphing fn
+import matplotlib
+#matplotlib.use("Agg") # if active is stops the interactive graph from showing but fixes the tkinter problems
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from mpl_toolkits.mplot3d import Axes3D
+
+# TODO : fix the 3d visualisation
 
 
 # global vars
 global_calc_out = None # the result of the calculation for k-maens
 global_calculation_complete = False
+global_plt_obj = None
+global_fig_obj = None
 
 # global calc vars
 global_ch_index_res = ""
@@ -47,6 +65,214 @@ def main(page: Page):
     # vars
 
     # functions in app
+
+    # fn to convert data for graph
+    def convert_data_for_graph():
+        print("Called fn to convert data for graph and call the graph")
+
+        # cluster
+        clusters = {
+            f"C{i}": cluster
+            for i, cluster in enumerate(global_cluster_list_res)
+        }
+
+        # centers
+        centroids = global_centers_res
+
+        #show_3d_graph_of_calculation_old(clusters,centroids,"X","Y","Z","Placeholder")
+        show_3d_graph_plotly_browser(clusters,centroids,"K-means graph 3D")
+
+    # new fn to put the graph in webvier(notusable)
+    """def show_3d_graph_plotly_webview(cluster_results, centers=None, x_lable="x", y_label="y", z_label="z", title="graph title"):
+        
+        print("Running new graphing fn... in webview")
+        
+        fields = [x_lable, y_label, z_label]
+        
+        fig = go.Figure()
+        
+        cluster_names = list(cluster_results.keys())
+        
+        for i, cluster_name in enumerate(cluster_names):
+            
+            points = cluster_results[cluster_name]
+            
+            if not points:
+                continue
+            
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            zs = [p[2] for p in points]
+            
+            # cluster points
+            fig.add_trace(
+                go.Scatter3d(
+                    x=xs,
+                    y=ys,
+                    z=zs,
+                    mode="markers",
+                    name=cluster_name,
+                    marker=dict(size=4, opacity=0.6),
+                )
+            )
+            
+            # centroid (if provided)
+            if centers and i < len(centers):
+                cx, cy, cz = centers[i]
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=[cx],
+                        y=[cy],
+                        z=[cz],
+                        mode="markers",
+                        name=f"{cluster_name} center",
+                        marker=dict(
+                            size=2,
+                            symbol="x",
+                            color="black"
+                        ),
+                    )
+                )
+        
+        fig.update_layout(
+            title=title,
+            scene=dict(
+                xaxis_title=fields[0] if fields else "X",
+                yaxis_title=fields[1] if fields else "Y",
+                zaxis_title=fields[2] if fields else "Z",
+                ),
+                margin=dict(l=0, r=0, b=0, t=40),
+                legend_title="Clusters",
+            )
+        
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+        fig.write_html(tmp.name)
+
+        graph_webview.url = f"file:///{tmp.name.replace(os.sep, '/')}"
+        page.update()
+    """
+    
+    # new fn to draw the graph using plotly (webbrowser)
+    def show_3d_graph_plotly_browser(cluster_results, centers=None, title="graph title"):
+        
+        # global var
+        global global_fig_obj
+        
+        print("Running new graphing fn...")
+        
+        fields_fn_res = get_selected_fields()
+        print("Selected fields :")
+        print(fields_fn_res)
+        
+        fields = fields_fn_res
+        
+        fig = go.Figure()
+
+        #global_fig_obj = fig
+        
+        cluster_names = list(cluster_results.keys())
+        
+        for i, cluster_name in enumerate(cluster_names):
+            
+            points = cluster_results[cluster_name]
+            
+            if not points:
+                continue
+            
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            zs = [p[2] for p in points]
+            
+            # cluster points
+            fig.add_trace(
+                go.Scatter3d(
+                    x=xs,
+                    y=ys,
+                    z=zs,
+                    mode="markers",
+                    name=cluster_name,
+                    marker=dict(size=4, opacity=0.6),
+                )
+            )
+            
+            # centroid (if provided)
+            if centers and i < len(centers):
+                cx, cy, cz = centers[i]
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=[cx],
+                        y=[cy],
+                        z=[cz],
+                        mode="markers",
+                        name=f"{cluster_name} center",
+                        marker=dict(
+                            size=2,
+                            symbol="x",
+                            color="black"
+                        ),
+                    )
+                )
+        
+        fig.update_layout(
+            title=title,
+            scene=dict(
+                xaxis_title=fields[0] if fields else "X",
+                yaxis_title=fields[1] if fields else "Y",
+                zaxis_title=fields[2] if fields else "Z",
+                ),
+                margin=dict(l=0, r=0, b=0, t=40),
+                legend_title="Clusters",
+            )
+        
+        fig.show()
+        del fig
+        #global_fig_obj.show()
+    
+    # fn to draw the graph
+    def show_3d_graph_of_calculation_old(clusters, centroids, X_lable, Y_label, Z_label, graph_title):
+        print("Running graphing fn....")
+
+        # global vars
+        global global_plt_obj
+
+        global_plt_obj = plt
+        
+        # plotting
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection="3d")
+        
+        # color definitions
+        colors = matplotlib.colormaps.get_cmap("tab10").resampled(len(clusters))
+        
+        # enum clusters and assing label
+        for i, (cluster_name, points) in enumerate(clusters.items()):
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            zs = [p[2] for p in points]
+            
+            ax.scatter(xs, ys, zs, color=colors(i), label=cluster_name, alpha=0.6)
+        
+        # Plot centroids
+        for c in centroids:
+            ax.scatter(c[0], c[1], c[2], color="black", s=150, marker="x")
+        
+        
+        # set the labels for the axis x,y,z
+        
+        # x
+        ax.set_xlabel(X_lable)
+        
+        # y
+        ax.set_ylabel(Y_label)
+        
+        # z
+        ax.set_zlabel(Z_label)
+        
+        ax.set_title(graph_title)
+        ax.legend()
+        
+        # finally show the graph
+        global_plt_obj.show()
 
     # parse the result from run_kmeans_exe and seperate it into variables
     def split_ch_and_centers(raw: str):
@@ -81,6 +307,8 @@ def main(page: Page):
         print(global_cluster_list_res)
         set_results_values()
         hide_input_layout_show_result()
+        if (auto_open_graph.value):
+            convert_data_for_graph()
     
     
     # full exe function to call the alogrithm
@@ -166,10 +394,20 @@ def main(page: Page):
     # fn to set the result values
     def set_results_values():
         print("Fn called to set the result values!!")
-        ch_index_label.value = global_ch_index_res
-        centers_label.value = global_centers_res
-        clusters_label.value = global_cluster_list_res
+        ch_index_label.value = "Index : " + reduce_string(str(global_ch_index_res),150)
+        centers_label.value = "Centers positions : " + reduce_string(str(global_centers_res),150)
+        clusters_label.value = "Clusters values : " + reduce_string(str(global_cluster_list_res),150)
         page.update()
+    
+    # fn to recuce the text
+    def reduce_string(text: str, keep: int) -> str:
+        if not text or keep <= 0:
+            return "..."
+        
+        if len(text) <= keep:
+            return text
+        
+        return text[:keep + 1] + "..."
     
     # get current selected fields
     def get_selected_fields() -> list[str]:
@@ -340,6 +578,19 @@ def main(page: Page):
 
     def return_btn_fn(e):
         print("Return btn fn called !!!")
+
+        # global var
+        global global_calculation_complete
+        global global_ch_index_res
+        global global_centers_res
+        global global_cluster_list_res
+
+        global_calculation_complete = False
+        global_ch_index_res = ""
+        global_centers_res = ""
+        global_cluster_list_res = []
+        #global_plt_obj.close("all") # old close graph call from mathplotlib (hanging thread issue)
+        
         hide_result_layout_show_input_section()
 
     # show result layout fn
@@ -356,15 +607,54 @@ def main(page: Page):
         result_layout.visible = False
         page.update()
     
+    # change theme btn
+    def change_theme_fn():
+        print("Change theme fn called !!")
+        if (page.theme_mode == "light"):
+            page.theme_mode = "dark"
+        else:
+            page.theme_mode = "light"
+        page.update()
+    
+    def fn_for_change_theme_menu_btn(e):
+        print("Menu button pressed fn called !!!")
+        change_theme_fn()
+    
+    # fn for showing graph btn
+    def show_graph_btn_fn(e):
+        print("Pressed show graph button!!!")
+        convert_data_for_graph()
+    
+    # fn to restart the app
+    def restart_app():
+        print("Restart fn app called !!!")
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+    
+    
+    # switch for menu
+    auto_open_graph = Switch()
+    auto_open_graph.value = True
+
     # app bar
     page.appbar = AppBar(
         #bgcolor="#1A1C1E",
-        title=Text("K-means calculator", size=22),
+        title=Text("K-means calculator", size=22,font_family="Roboto",weight=flet.FontWeight.BOLD),
         actions=[
             PopupMenuButton(
                 items=[
-                    PopupMenuItem(text="Settings"),
-                    PopupMenuItem(text="About"),
+                    PopupMenuItem(icon=flet.icons.DARK_MODE,text="Change theme",on_click=fn_for_change_theme_menu_btn),
+                    # switch menu btn
+                    PopupMenuItem(
+                        #on_click=popup_menu_action_cover_art_switch_change,
+                        content= Row(
+                            [
+                                Text("Auto open graph"),
+                                auto_open_graph,
+                            ]
+                        ),
+                    ),
+                    PopupMenuItem(text="Version : 1.0v"),
                 ]
             )
         ],
@@ -505,9 +795,9 @@ def main(page: Page):
     )
     
     # resulte layout
-    ch_index_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_700,size=20,text_align=flet.TextAlign.LEFT)
-    centers_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_700,size=20,text_align=flet.TextAlign.LEFT)
-    clusters_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_700,size=20,text_align=flet.TextAlign.LEFT)
+    ch_index_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_600,size=25,text_align=flet.TextAlign.LEFT)
+    centers_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_500,size=20,text_align=flet.TextAlign.LEFT)
+    clusters_label = Text("...",font_family="Roboto",weight=flet.FontWeight.W_500,size=20,text_align=flet.TextAlign.LEFT)
 
     return_btn = ElevatedButton(
         text="Return",
@@ -521,13 +811,50 @@ def main(page: Page):
         on_click=return_btn_fn
     )
 
+    show_graph_btn = ElevatedButton(
+        text="Show Graph",
+        bgcolor="#639bff",
+        color="#14080E",
+        width=900,
+        height=50,
+        style=flet.ButtonStyle(
+            shape=flet.RoundedRectangleBorder(radius=20),
+        ),
+        on_click=show_graph_btn_fn
+    )
+
+    result_btn_sub_layout = Column(
+        [
+            show_graph_btn,
+            return_btn
+        ],
+        alignment=flet.alignment.center,
+        horizontal_alignment=flet.CrossAxisAlignment.CENTER,
+    )
+
+    graph_webview = WebView(
+        url="",
+        expand=True,
+    )
+
     result_layout = Column(
         [
-            Text("Result",font_family="Roboto",weight=flet.FontWeight.W_700,size=20,text_align=flet.TextAlign.LEFT),  
+            Text("Result",font_family="Roboto",weight=flet.FontWeight.W_700,size=20,text_align=flet.TextAlign.LEFT),
+            Container(height=10),
             ch_index_label,
+            Container(
+                bgcolor=flet.colors.GREY_400,
+                height=1,
+            ),
             centers_label,
             clusters_label,
-            return_btn
+            Container(height=90),
+            Row(
+                [
+                    Container(width=50),
+                    result_btn_sub_layout
+                ]
+            ),
         ]
     )
 
