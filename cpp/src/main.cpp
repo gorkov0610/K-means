@@ -49,6 +49,7 @@ int main(){
     point datasetCentroid((cx/instances.size()), (cy/instances.size()), (cz/instances.size()));
 
     if(!input.contains("centers")){
+        //sample random instances from the dataset for centroids
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<> distrib(0, numOfPoints - 1);
@@ -72,16 +73,19 @@ int main(){
     size_t chunkSize = static_cast<size_t>(std::ceil(static_cast<float>(instances.size()) / numThreads));
     std::vector<point> oldCenters(numClusters);
     while(iteration < numIterations && eps > eps2){
+        //get the centroids from the earlier iterartion, important for calculating the rate of change
         for(auto i{0} ; i < numClusters; i++){
             clusters[i].clearPoints();
             oldCenters[i] = clusters[i].getCenter();
         }
+        //split the dataset into chunks to allow paralelization
         std::vector<std::vector<std::vector<point>>> threadLocalPoints(numThreads, std::vector<std::vector<point>>(numClusters));
         std::vector<std::future<void>> futures;
         for(auto t{0}; t < numThreads; t++){
             auto start = t * chunkSize;
             auto end = std::min(start + chunkSize, instances.size());
-
+            
+            //calculate the smallest distance for every point and store it
             futures.push_back(pool.enqueue([&, t, start, end](){
                 for(auto i{start}; i < end; i++){
                     const point& p = instances[i];
@@ -100,11 +104,13 @@ int main(){
             }));
         }
 
+        //synchronize the threads to the main program 
         for(auto& f : futures){
             f.get();
         }
         futures.clear();
 
+        //assign the points to the nearest cluster
         for(auto k{0}; k < numClusters; k++){
             for(auto t{0}; t < numThreads; t++){
                 for(auto& p : threadLocalPoints[t][k]){
@@ -113,6 +119,7 @@ int main(){
             }
         }
 
+        //update the centroids
         for(auto k{0}; k < numClusters; k++){
             futures.push_back(pool.enqueue([&, k](){
                 clusters[k].calculateCenter();
@@ -122,6 +129,8 @@ int main(){
             f.get();
         }
         futures.clear();
+
+        //calculate the change, if its under the threshold break
         float maxShift{0.0f};
         for(auto i{0}; i < numClusters; i++){
             float shift = (clusters[i].getCenter() - oldCenters[i]).squaredNorm();
@@ -132,6 +141,7 @@ int main(){
         iteration++;
     }
 
+    //calculate BCSS and WCSS using the thread pool
     std::vector<std::future<float>> futures;
     float BCSS(0.0);
     for(auto i{0}; i < numClusters; i++){
@@ -158,7 +168,11 @@ int main(){
     for(auto& i : futures){
         WCSS += i.get();
     }
+
+    //calculate the CH index
     float CH = (BCSS / (numClusters - 1)) / (WCSS / (numOfPoints - numClusters));
+
+    //parse the result from the clustering in a JSON object
     json output;
     output["CH_index"] = CH;
     for(auto c{0} ; c < clusters.size(); c++){
@@ -171,6 +185,8 @@ int main(){
             output[key].push_back({p.x, p.y, p.z});
         } 
     }
+
+    //print the results
     std::cout << output.dump(2);
     return 0;
 }
